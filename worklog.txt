@@ -1,0 +1,7 @@
+20min = brute force done
+1h = generator done
+1h = updated generator & create MAKE commands to create easy/medium/hard boards
+15min = tidy up
+15min = readme
+
+Total = 2h50
