@@ -3,5 +3,8 @@
 1h = updated generator & create MAKE commands to create easy/medium/hard boards
 15min = tidy up
 15min = readme
+3h = various improvements, LRU, non recursive checker, limiting search space, make checker call sparse
+1h30 = tried misc improvements without any good results
 
-Total = 2h50
+Total = 7h20
+

@@ -28,7 +28,7 @@ struct Board {
 		x = other.x, y = other.y;
 		moves = other.moves;
 	}
-	Board(vector<string> str_board, int px, int py) : n(str_board.size()), m(str_board[0].size()), can_pass(n, vector<bool>(m)), visited_count(n, vector<int>(m, 0)), x(px), y(py) {
+	Board(const vector<string> &str_board, int px, int py) : n(str_board.size()), m(str_board[0].size()), can_pass(n, vector<bool>(m)), visited_count(n, vector<int>(m, 0)), x(px), y(py) {
 
 		flat_board.set();
 		for(size_t i = 0; i < str_board.size(); i++) {
@@ -79,6 +79,9 @@ struct Board {
 			y -= dy[dir];
 		}
 	}
+	void rollback_all() {
+		while(!moves.empty()) rollback();
+	}
 	
 	bool won() const {
 		return flat_board.all();
@@ -117,19 +120,129 @@ struct Board {
 using HashSet = unordered_set<Board, Board::HashFunction>;
 using HashMap = unordered_map<Board, int, Board::HashFunction>;
 
-bool can_win(Board &b) {
-	static HashSet lose_states; // only one hashset across all calls, it saves all states that are impossible to win
-	if(b.won()) return true;
-	if(!lose_states.insert(b).second) return false;
+struct LRU {
+	unordered_map<Board, list<Board>::iterator, Board::HashFunction> hash_map;
+	list<Board> order;
+
+	const size_t size_lim = 500'000;
+	// size_t bloom = 0;
+
+	bool insert(const Board &b) {
+		//bloom |= Board::HashFunction{}(b);
+		auto [it, inserted] = hash_map.insert({b, order.end()});
+		if(inserted) {
+			order.push_back(b);
+			it->second = prev(order.end());
+
+			if(order.size() > size_lim) {
+				hash_map.erase(order.front());
+				order.pop_front();
+			}
+
+			return true;
+		}
+
+		order.splice(order.end(), order, it->second);
+		return false;
+	}
+	inline bool exists(const Board &b) {
+		//size_t hashing = Board::HashFunction{}(b);
+		//if((bloom & hashing) != hashing) return false;
+		auto it = hash_map.find(b);
+
+		if(it == hash_map.end()) {
+			return false;
+		}
+
+		order.splice(order.end(), order, it->second);
+		return true;
+	}
+};
+
+bool can_win_iterative(Board &b, size_t depth) {
+	static LRU lose_states; // only one LRU cache across all calls, it saves all states that are impossible to win
+	LRU visiting_states;
+
+	vector<pair<array<int, 4>, int>> stack;
 	array<int, 4> moves = {0, 1, 2, 3};
-	random_shuffle(moves.begin(), moves.end());
+	shuffle(moves.begin(), moves.end(), rng);
+
+	stack.push_back({moves, 0});
+
+	int search_limit = 1'000'000;
+	while(!stack.empty()) {
+		if(--search_limit < 0) {
+			b.rollback_all();
+			return false;
+		}
+		
+		if(stack.back().second > 0) {
+			b.rollback();
+		}
+		
+		if(stack.back().second >= 4) {
+			lose_states.insert(b);
+			// visiting_states.erase(b);
+			stack.pop_back();
+			continue;
+		}
+		
+		if(b.won()) {
+			b.rollback_all();
+			return true;
+		}
+		
+		if(stack.size() > depth) {
+			stack.pop_back();
+			continue;
+		}
+		
+		if(stack.back().second == 0 and (!visiting_states.insert(b) or lose_states.exists(b))) {
+			stack.pop_back();
+			continue;
+		}
+
+		b.move(stack.back().first[ stack.back().second++ ]);
+		shuffle(moves.begin(), moves.end(), rng);
+		stack.push_back({moves, 0});
+	}
+
+	return false;
+}
+
+bool can_win(Board &b, HashSet &visiting_states, int depth) {
+	static LRU lose_states; // only one LRU cache across all calls, it saves all states that are impossible to win
+	if(b.won()) return true;
+	
+	if(depth <= 0 or !visiting_states.insert(b).second or lose_states.exists(b)) return false;
+	
+	array<int, 4> moves = {0, 1, 2, 3};
+	shuffle(moves.begin(), moves.end(), rng);
 	for(int i : moves) {
 		b.move(i);
-		bool ans = can_win(b);
+		bool ans = can_win(b, visiting_states, depth - 1);
 		b.rollback();
-		if(ans) return lose_states.erase(b), true;
+		if(ans) return true;
 	}
+	lose_states.insert(b);
 	return false;
+}
+long double can_win_total_time = 0;
+bool can_win(Board &b) {
+	// HashSet visiting_states;
+	const int max_depth = 100;
+	// int ans = can_win(b, visiting_states, max_depth);
+	// cout << "<<<<<<<<<<< " << ans << " " << can_win_iterative(b, size_t(max_depth)) << endl;
+	// assert(ans == can_win_iterative(b, size_t(max_depth)));
+	// return ans;
+
+	auto start = clock();
+
+	bool ans = can_win_iterative(b, size_t(max_depth));
+
+	can_win_total_time += (long double)(clock() - start) / CLOCKS_PER_SEC; 
+
+	return ans;
 }
 
 void shortest_win(Board &b, HashSet &visited_states, int &shortest_solution, int cur_moves) {
@@ -175,7 +288,11 @@ Board build(int n, int m) {
 		return 0 <= i and i < n and 0 <= j and j < m;
 	};
 
-	for(int it = 0; it < 2 * n * m or rand(0, min(100, n * m)); it++) { // after 2 * n * m iteractions, there is a 1% chance of stopping
+	vector<pair<int, bool>> buffer;
+	int buffer_cnt = 0;
+	const int it_limit = 2 * n * m + rand(0, min(200, n * m));
+	for(int it = 0; it < it_limit or buffer_cnt > 0; it++) { // after 2 * n * m iteractions, there is a 2% chance of stopping
+		cerr << it << endl;
 		if(rand(0, 10) == 0) {
 			dir = rand(0, 3);
 		}
@@ -186,18 +303,35 @@ Board build(int n, int m) {
 
 		curx += Board::dx[dir], cury += Board::dy[dir];
 
+		buffer.push_back({dir, str_board[curx][cury] == '#'});
 		if(str_board[curx][cury] == '#') {
 			board.change_block(curx, cury, '.');
 			str_board[curx][cury] = '.';
 
-			if(!can_win(board)) {
-				// if not possible to win, revert last change and change directions
+			if(++buffer_cnt >= 5) {
+				if(!can_win(board)) {
+					// if not possible to win, revert last few changes and change directions
+					while(!buffer.empty()) {
+						auto [ddir, should_change] = buffer.back(); buffer.pop_back();
+						if(should_change) {
+							board.change_block(curx, cury, '#');
+							str_board[curx][cury] = '#';
+						}
+						curx -= Board::dx[ddir], cury -= Board::dy[ddir];
+						dir = ddir;
+					}
+					dir = rand(0, 3);
+				}
+				buffer.clear();
+				buffer_cnt = 0;
+			}
+			/*if(!can_win(board)) {
 				board.change_block(curx, cury, '#');
 				str_board[curx][cury] = '#';
-
 				curx -= Board::dx[dir], cury -= Board::dy[dir];
-				dir = rand(0, 3);
-			}
+				int old_dir = dir;
+				do { dir = rand(0, 3); } while(dir == old_dir);
+			}*/
 		}
 	}
 
@@ -208,7 +342,7 @@ vector<Board> gen(int n, int m, size_t lim, int moves_lowerbound) {
 
 	long double shortest_wins_time = 0;
 	long double build_board_time = 0;
-	int interactions = min<int>(100, int(lim) * 5);
+	int interactions = 0;
 	vector<Board> boards;
 	while(boards.size() < lim) {
 		interactions++;
@@ -220,13 +354,14 @@ vector<Board> gen(int n, int m, size_t lim, int moves_lowerbound) {
 		int moves = shortest_win(board);
 		shortest_wins_time += (long double)(clock() - start_shortest_time) / CLOCKS_PER_SEC;
 
-		if(moves > moves_lowerbound) {
+		if(moves >= moves_lowerbound) {
 			boards.push_back(board);
 		}
 	}
 
 	cerr << "Number of interactions to generate all boards: " << interactions << endl;
 	cerr << "Total time building boards: " << build_board_time << endl;
+	cerr << "Total time checking if there is a winning solution for a board: " << can_win_total_time << endl;
 	cerr << "Total time computing shortest wins: " << shortest_wins_time << endl << endl;
 
 	return boards;

@@ -42,3 +42,9 @@ This command will try to create five boards of an harder dificult on the `hard` 
 # Further improvements
 - Usage of threads to generate boards in parallel
 - Usage of heuristics to generate boards faster
+
+- Implement LRU cache
+- Add limits for search space - depth or number of moves, total moves tried
+- Checks if there is solution only after a few moves(~5) and not at every move
+- Re-implement the brute force checker without recursion
+
